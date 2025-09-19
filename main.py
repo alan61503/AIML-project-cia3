@@ -4,7 +4,7 @@
 import torch
 import torch.nn.functional as F
 from torch_geometric.datasets import Planetoid
-from torch_geometric.nn import GCNConv, GATConv
+from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 from torch_geometric.utils import dropout_adj
 import random
 import numpy as np
@@ -99,6 +99,25 @@ class GAT(torch.nn.Module):
         x = self.gat2(x, edge_index)
         return x
 
+# ----- GraphSAGE Model -----
+class GraphSAGE(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, dropout=0.5):
+        super(GraphSAGE, self).__init__()
+        self.conv1 = SAGEConv(in_channels, hidden_channels)
+        self.conv2 = SAGEConv(hidden_channels, hidden_channels)
+        self.lin = torch.nn.Linear(hidden_channels, out_channels)
+        self.dropout = dropout
+
+    def forward(self, x, edge_index):
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.conv2(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.lin(x)
+        return x
+
 # -----------------------
 # Step 5: Initialize Model
 # -----------------------
@@ -107,6 +126,8 @@ def build_model(model_choice: str, in_channels: int, hidden_channels: int, out_c
         return GCN(in_channels, hidden_channels, out_channels, dropout=dropout)
     elif model_choice == 'gat':
         return GAT(in_channels, hidden_channels, out_channels, dropout=dropout)
+    elif model_choice == 'sage':
+        return GraphSAGE(in_channels, hidden_channels, out_channels, dropout=dropout)
     else:
         raise ValueError(f"Unknown model_choice: {model_choice}")
 
@@ -209,13 +230,34 @@ def grid_search(args: argparse.Namespace):
     else:
         print()
 
+def compare_models(args: argparse.Namespace):
+    models = args.compare_models or []
+    if not models:
+        print("No models provided for comparison.")
+        return
+    results = []
+    print("\n=== Multi-model comparison ===")
+    for m in models:
+        cfg = argparse.Namespace(**{**vars(args), 'model': m})
+        print(f"\nTraining {m.upper()}...")
+        metrics = run_experiment(cfg)
+        results.append((m, metrics))
+    # Print summary
+    print("\nModel, Clean Accuracy, Clean Macro-F1, Noisy Accuracy, Noisy Macro-F1")
+    for m, met in results:
+        acc = f"{met['acc']:.4f}" if met.get('acc') is not None else "-"
+        f1 = f"{met['f1']:.4f}" if met.get('f1') is not None else "-"
+        accn = f"{met['acc_noisy']:.4f}" if met.get('acc_noisy') is not None else "-"
+        f1n = f"{met['f1_noisy']:.4f}" if met.get('f1_noisy') is not None else "-"
+        print(f"{m},{acc},{f1},{accn},{f1n}")
+
 # -----------------------
 # Step 8: Run Training on Clean Data
 # -----------------------
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='GNN on Planetoid datasets with simple augmentations and tuning')
     parser.add_argument('--dataset', type=str, default='Cora', choices=['Cora', 'CiteSeer', 'PubMed'], help='Dataset name')
-    parser.add_argument('--model', type=str, default='gcn', choices=['gcn', 'gat'], help='Model variant')
+    parser.add_argument('--model', type=str, default='gcn', choices=['gcn', 'gat', 'sage'], help='Model variant')
     parser.add_argument('--hidden-channels', dest='hidden_channels', type=int, default=16, help='Hidden channels')
     parser.add_argument('--dropout', type=float, default=0.5, help='Model dropout')
     parser.add_argument('--epochs', type=int, default=200, help='Training epochs')
@@ -233,12 +275,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--gs-hidden', dest='gs_hidden', type=int, nargs='*', default=None, help='Grid values for hidden channels')
     parser.add_argument('--gs-lr', dest='gs_lr', type=float, nargs='*', default=None, help='Grid values for learning rate')
     parser.add_argument('--gs-dropout', dest='gs_dropout', type=float, nargs='*', default=None, help='Grid values for dropout')
+    parser.add_argument('--compare', dest='compare', action='store_true', help='Compare multiple models in one run')
+    parser.add_argument('--compare-models', dest='compare_models', type=str, nargs='*', default=None, help='Models to compare, e.g., gcn gat sage')
     return parser.parse_args()
 
 def main():
     args = parse_args()
     if args.grid_search:
         grid_search(args)
+    elif args.compare:
+        compare_models(args)
     else:
         metrics = run_experiment(args)
         print(f"\nDevice: {metrics['device']}")

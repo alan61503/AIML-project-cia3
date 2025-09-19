@@ -12,8 +12,19 @@
   - Edge dropout (`--edge-dropout`)
 
 ## 3) Model Design
-- **Variants**: `GCN` and `GAT` implemented in `main.py`.
+- **Chosen variants**: `GCN`, `GAT`, and optional `GraphSAGE` implemented in `main.py`.
 - **Planning knobs**: hidden size (`--hidden-channels`), dropout (`--dropout`).
+
+### High-Level Architecture
+- Input: Node feature vectors
+- Hidden: 2–3 GNN layers (`GCNConv`, `GATConv`, or `SAGEConv`), each with ReLU + dropout
+- Output: Linear to num classes
+- Loss: Cross-Entropy; Optimizer: Adam (lr ~ 0.01)
+
+### Architecture Examples
+- GCN (Cora): 1433 → GCNConv(16) + ReLU + Dropout(0.5) → GCNConv(16) + ReLU → Linear(7)
+- GAT: GATConv(8 heads × 8) → GATConv(1 head × 16) → Linear(7)
+- GraphSAGE (optional): SAGEConv(16) → SAGEConv(16) → Linear(7)
 
 ## 4) Model Implementation
 - **Framework**: PyTorch + PyTorch Geometric.
@@ -46,6 +57,11 @@ python main.py --dataset Cora --model gcn --epochs 20 --cpu --eval-noisy --eval-
 
 # Grid search
 python main.py --grid-search --gs-hidden 16 32 --gs-lr 0.01 0.005 --gs-dropout 0.5 0.6 --cpu
+```
+
+```bash
+# Try GraphSAGE
+python main.py --dataset Cora --model sage --epochs 50 --cpu
 ```
 
 ## Notes
