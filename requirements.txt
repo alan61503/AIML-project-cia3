@@ -1,0 +1,15 @@
+# Core
+torch>=2.1.0
+torch-geometric>=2.4.0
+# The following packages are dependencies for torch-geometric optional ops; install via pip wheels per platform if needed
+# torch-scatter
+# torch-sparse
+# torch-cluster
+# torch-spline-conv
+
+# Utilities
+numpy>=1.24.0
+scikit-learn>=1.3.0
+
+# Notebook/demo
+jupyter>=1.0.0
