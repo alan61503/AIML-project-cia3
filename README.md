@@ -39,7 +39,7 @@
 - **Notebook**: `demo.ipynb` shows config, training, eval, and optional tuning.
 
 ## 7) Project Report (How to reproduce)
-- Document key results, challenges, and improvements below. Example commands:
+- Document key results, challenges, and improvements below. Example commands
 
 ```bash
 # Create venv (Windows PowerShell)
