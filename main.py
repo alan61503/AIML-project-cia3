@@ -21,6 +21,9 @@ import random
 import numpy as np
 import argparse
 from typing import Dict, Any, Optional, Tuple
+import os
+import matplotlib
+matplotlib.use('Agg')  # non-interactive backend to avoid blocking
 import matplotlib.pyplot as plt
 
 try:
@@ -188,7 +191,7 @@ def evaluate(model, data) -> Tuple[float, Optional[float]]:
 # -----------------------
 # Step 7b: Explainability
 # -----------------------
-def explain_model(model, data, node_idx=None):
+def explain_model(model, data, node_idx=None, model_name: str = 'model'):
     if not _EXPLAIN_AVAILABLE:
         print("Explainability not available: GNNExplainer not found in this PyG version.")
         # Fall back to gradient-based saliency
@@ -196,6 +199,7 @@ def explain_model(model, data, node_idx=None):
     if node_idx is None:
         node_idx = random.choice(torch.where(data.test_mask)[0].tolist())
     print(f"\nExplaining prediction for node {node_idx}...")
+    os.makedirs('explanations', exist_ok=True)
 
     used_gnn_explainer = False
     if _EXPLAIN_AVAILABLE:
@@ -217,7 +221,10 @@ def explain_model(model, data, node_idx=None):
                 used_gnn_explainer = True
                 try:
                     explainer.visualize_subgraph(node_idx, data.edge_index, edge_mask, y=data.y)
-                    plt.show()
+                    out_path = os.path.join('explanations', f'{model_name}_node{node_idx}_subgraph.png')
+                    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+                    plt.close()
+                    print(f"Saved subgraph explanation to {out_path}")
                 except Exception as e:
                     print(f"Visualization not available: {e}")
         except Exception as e:
@@ -243,9 +250,12 @@ def explain_model(model, data, node_idx=None):
             plt.xticks(range(len(top_idx)), top_idx, rotation=45)
             plt.title('Feature saliency (|d logit / d x|)')
             plt.tight_layout()
-            plt.show()
-        except Exception:
-            pass
+            out_path = os.path.join('explanations', f'{model_name}_node{node_idx}_saliency.png')
+            plt.savefig(out_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            print(f"Saved saliency plot to {out_path}")
+        except Exception as e:
+            print(f"Could not save saliency plot: {e}")
 
 # -----------------------
 # Step 8: Experiment Runner
@@ -276,12 +286,39 @@ def run_experiment(args: argparse.Namespace) -> Dict[str, Any]:
     if args.explain:
         explain_model(model, data)
 
-    return {
+    result: Dict[str, Any] = {
         'acc': acc,
         'f1': f1,
         'final_loss': final_loss,
         'device': str(device)
     }
+    if getattr(args, 'return_model', False):
+        result['model'] = model
+        result['data'] = data
+    return result
+
+# -----------------------
+# Step 8b: Run all models in one go
+# -----------------------
+def run_all_models(args: argparse.Namespace):
+    models = ['gcn', 'gat', 'sage']
+    results = []
+    print("\n=== Running all models (GCN, GAT, SAGE) ===")
+    for m in models:
+        cfg = argparse.Namespace(**{**vars(args), 'model': m, 'explain': False, 'return_model': True})
+        print(f"\nTraining {m.upper()}...")
+        metrics = run_experiment(cfg)
+        results.append((m, metrics))
+        if getattr(args, 'explain', False):
+            try:
+                explain_model(metrics['model'], metrics['data'], model_name=m)
+            except Exception as e:
+                print(f"Explainability for {m.upper()} skipped: {e}")
+    print("\nModel, Clean Accuracy, Clean Macro-F1")
+    for m, met in results:
+        acc = f"{met['acc']:.4f}" if met.get('acc') is not None else "-"
+        f1 = f"{met['f1']:.4f}" if met.get('f1') is not None else "-"
+        print(f"{m},{acc},{f1}")
 
 # -----------------------
 # Step 9: CLI
@@ -302,10 +339,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--log-every', dest='log_every', type=int, default=20)
     parser.add_argument('--explain', action='store_true', help='Run GNNExplainer on a random test node')
+    parser.add_argument('--all-models', action='store_true', help='Run GCN, GAT, and SAGE sequentially')
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    if args.all_models:
+        run_all_models(args)
+        return
     metrics = run_experiment(args)
     print(f"\nDevice: {metrics['device']}")
     print(f"Clean Accuracy: {metrics['acc']:.4f}")
