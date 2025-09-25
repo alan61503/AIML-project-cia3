@@ -4,7 +4,18 @@
 import torch
 import torch.nn.functional as F
 from torch_geometric.datasets import Planetoid
-from torch_geometric.nn import GCNConv, GATConv, SAGEConv, GNNExplainer
+from torch_geometric.nn import GCNConv, GATConv, SAGEConv
+try:
+    # PyG >= 2.3
+    from torch_geometric.explain.algorithm import GNNExplainer  # type: ignore
+    _EXPLAIN_AVAILABLE = True
+except Exception:
+    try:
+        # Older PyG
+        from torch_geometric.nn.models import GNNExplainer  # type: ignore
+        _EXPLAIN_AVAILABLE = True
+    except Exception:
+        _EXPLAIN_AVAILABLE = False
 from torch_geometric.utils import dropout_adj
 import random
 import numpy as np
@@ -178,14 +189,63 @@ def evaluate(model, data) -> Tuple[float, Optional[float]]:
 # Step 7b: Explainability
 # -----------------------
 def explain_model(model, data, node_idx=None):
+    if not _EXPLAIN_AVAILABLE:
+        print("Explainability not available: GNNExplainer not found in this PyG version.")
+        # Fall back to gradient-based saliency
     model.eval()
-    explainer = GNNExplainer(model, epochs=200)
     if node_idx is None:
         node_idx = random.choice(torch.where(data.test_mask)[0].tolist())
     print(f"\nExplaining prediction for node {node_idx}...")
-    node_feat_mask, edge_mask = explainer.explain_node(node_idx, data.x, data.edge_index)
-    explainer.visualize_subgraph(node_idx, data.edge_index, edge_mask, y=data.y)
-    plt.show()
+
+    used_gnn_explainer = False
+    if _EXPLAIN_AVAILABLE:
+        try:
+            # Instantiate explainer with version fallback
+            try:
+                explainer = GNNExplainer(model, epochs=200)
+            except TypeError:
+                try:
+                    explainer = GNNExplainer(model)
+                except TypeError:
+                    explainer = GNNExplainer(epochs=200)
+            # Attempt common method names
+            if hasattr(explainer, 'explain_node'):
+                try:
+                    node_feat_mask, edge_mask = explainer.explain_node(node_idx, data.x, data.edge_index)
+                except TypeError:
+                    node_feat_mask, edge_mask = explainer.explain_node(node_idx, model, data.x, data.edge_index)
+                used_gnn_explainer = True
+                try:
+                    explainer.visualize_subgraph(node_idx, data.edge_index, edge_mask, y=data.y)
+                    plt.show()
+                except Exception as e:
+                    print(f"Visualization not available: {e}")
+        except Exception as e:
+            print(f"GNNExplainer failed, falling back to saliency: {e}")
+
+    if not used_gnn_explainer:
+        # Gradient-based feature saliency as fallback
+        x = data.x.clone().detach().requires_grad_(True)
+        logits = model(x, data.edge_index)
+        pred_class = int(logits[node_idx].argmax())
+        target = logits[node_idx, pred_class]
+        model.zero_grad(set_to_none=True)
+        target.backward()
+        saliency = x.grad[node_idx].abs().detach().cpu()
+        topk = min(10, saliency.shape[0])
+        top_idx = torch.topk(saliency, k=topk).indices.tolist()
+        print(f"Predicted class: {pred_class}")
+        print(f"Top-{topk} salient feature indices: {top_idx}")
+        try:
+            plt.figure(figsize=(6,3))
+            vals = saliency[top_idx].numpy()
+            plt.bar(range(len(top_idx)), vals)
+            plt.xticks(range(len(top_idx)), top_idx, rotation=45)
+            plt.title('Feature saliency (|d logit / d x|)')
+            plt.tight_layout()
+            plt.show()
+        except Exception:
+            pass
 
 # -----------------------
 # Step 8: Experiment Runner
